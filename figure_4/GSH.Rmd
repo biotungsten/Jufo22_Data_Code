@@ -1,0 +1,97 @@
+---
+title: "GSH"
+output: html_document
+---
+
+```{r}
+library(devtools)
+install_github("biotungsten/david.sauer.utility@master")
+library(david.sauer.utility)
+library(ggtext)
+library(svglite)
+library(tidyverse)
+library(multcompView)
+```
+
+We read in the data and perform simple preparations.
+```{r}
+raw.data <- read_csv("data.csv")
+row.labels.for.exclusion <- c() # controlls which measurements are excluded (provide labels as in data file)
+
+data <- raw.data %>% 
+  filter(!(Label %in% row.labels.for.exclusion)) %>%
+  separate(Label, c("substance", "concentration", NA), sep = "-") %>%
+  mutate(label = paste(substance, concentration))
+
+data.grouped <- data %>%
+  group_by(substance, concentration)
+
+data.aggregated <- data.grouped %>%
+  summarize(cys.mean = mean(CYS), cys.sd = sd(CYS), gsh.mean = mean(GSH), gsh.sd = sd(GSH), .groups = "drop") %>%
+  mutate(label = paste(substance, concentration))
+```
+
+We plot the data.
+```{r}
+p.gsh <- data.aggregated %>% 
+  ggplot(mapping = aes(x = label, 
+                       y = gsh.mean,
+                       ymin = gsh.mean - gsh.sd,
+                       ymax = gsh.mean + gsh.sd)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  scale_y_continuous(limits = c(0, 700), 
+                     sec.axis = sec_axis(~ . * (1/filter(data.aggregated, substance == "CTRL")$gsh.mean))) + 
+  geom_col(fill = "grey", col = "black", width = .6) +
+  geom_errorbar(size = .5,
+                width = .5,
+                col = "black") +
+  geom_dotplot(binaxis = "y",
+               data = data,
+               mapping = aes(x = label, y = GSH),
+               inherit.aes = FALSE,
+               stroke = 2,
+               colour = "black",
+               binwidth = 5,
+               fill = "black") +
+  labs(y = "GSH Gehalt [µg * mg FW]")
+ggsave("gsh_prelim.eps", device = "eps")
+
+p.cys <- data.aggregated %>% 
+  ggplot(mapping = aes(x = label, 
+                       y = cys.mean,
+                       ymin = cys.mean - cys.sd,
+                       ymax = cys.mean + cys.sd)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  scale_y_continuous(limits = c(0, 40), 
+                     sec.axis = sec_axis(~ . * (1/filter(data.aggregated, substance == "CTRL")$cys.mean))) + 
+  geom_col(fill = "grey", col = "black", width = .6) +
+  geom_errorbar(size = .5,
+                width = .5,
+                col = "black") +
+  geom_dotplot(binaxis = "y",
+               data = data,
+               mapping = aes(x = label, y = CYS),
+               inherit.aes = FALSE,
+               stroke = .1,
+               colour = "black",
+               binwidth = 5,
+               size = 0.5,
+               fill = "black") +
+  labs(y = "Cys Gehalt [µg * mg FW]")
+ggsave("cys_prelim.eps", device = "eps")
+```
+
+```{r}
+data.stat <- data %>%
+  filter(!str_detect(label, "H")) # we exclude hydroquinone data, since we have <5 data points for those
+anova.gsh <- aov(GSH ~ label, data = data.stat) # no significant difference
+anova.cys <- aov(CYS ~ label, data = data.stat)
+
+tukey.cys <- TukeyHSD(anova.cys)
+letters.cys <- multcompLetters4(anova.cys, tukey.cys)
+```
+

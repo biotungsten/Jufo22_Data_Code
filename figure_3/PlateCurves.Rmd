@@ -1,0 +1,253 @@
+---
+title: "Analysis of PC"
+output: html_document
+---
+In this R notebook I will analyse the data of the dose-response-curve experiments with *A. thaliana* on 1/2 Hoogland medium.
+
+
+First we have to do some imports.
+```{r}
+library(devtools)
+library(david.sauer.utility)
+library(stringr)
+library(ggplot2)
+library(ggtext)
+library(ggpubr)
+```
+
+
+Then we define some specific convenience functions.
+```{r}
+pc.table.as.concentration.table <- function(df, treatments) {
+  treatments <- t(sapply(treatments, appl2.label.as.vector))
+  new.df <- data.frame(treatments[rep(seq_len(nrow(treatments)), each = ncol(df)), ])
+  val <- df[1,]
+  for (n in seq_len(nrow(df)-1)) {
+    val <- c(val, df[(n+1),])
+  }
+  new.df$response <- unname(val)
+  colnames(new.df) <- c("substance", "concentration", "batch", "response")
+  return(new.df)
+}
+
+process.ng <- function(data, mode) {
+  data.cpy <- data
+  if (mode == 0){ # do nothing
+    return(data)
+  }
+  if (mode == 1){ # count ungerminated seeds with root length 0
+    data[data == "NG"] <- 0
+    data <- data.frame(sapply(data, as.numeric))
+    return(data)
+  }
+  if (mode == 2){ # ignore ungerminated seeds
+    data[data == "NG"] <- NA
+    data <- data.frame(sapply(data, as.numeric))
+    return(data)
+  }
+}
+```
+
+Set modes for analysis.
+```{r}
+analysis.mode <- 1 # controlls how to handle ungerminated seeds
+normal.process.mode <- 0 # controlls whether to cap normalized values at 1
+batches.for.analysis <- c(1,2,3,4) # controlls which batches to analyze
+row.labels.for.exclusion <- c("H-50-4", "C-5-3", "R-500-3", "C-2-2", "C-5-2", "C-10-2", "R-50-2", "H-50-2", "CTRL-0-2", "CTRL-0-3") # controlls which plates are excluded (provide labels as in data file)
+normalize.germination <- TRUE
+normalize.root.length <- TRUE
+fit.germination.with.ctrl = TRUE
+RMSE <- function(error) { sqrt(mean(error^2)) }
+```  
+
+Import of data.
+```{r}
+raw.data <- data.frame(readxl::read_xlsx("PC1RootLength.xlsx", col_types = c("text")))
+data <- raw.data
+rownames(data) <- data$treatment
+data$treatment <- NULL
+if (length(row.labels.for.exclusion) > 0) { # remove data specified by row.labels.for.exclusion
+  data <- data[-c(sapply(row.labels.for.exclusion, function(x) {
+    return(as.idx.rowname(data, x))
+  })), ]
+}
+data <- data[as.integer(t(sapply(rownames(data), appl2.label.as.vector))[, 3]) %in% batches.for.analysis, ] # leaves only batches specified in batches.for.analysis
+treatments <- rownames(data)
+```
+
+First we process the root length data and normalize the data.
+```{r}
+data <- process.ng(data, analysis.mode)
+data.concentration.table <- pc.table.as.concentration.table(data, treatments)
+data.aggregated <- data.frame(mean = apply(data, 1, function(x) mean(x, na.rm = TRUE)),
+                                   sd = apply(data, 1, function(x) sd(x, na.rm = TRUE)))
+data.aggregated[is.na(data.aggregated)] <- 0
+
+
+rownames(data.aggregated) <- treatments
+
+if (normalize.root.length){
+  n <- 0
+  batches <- unique(data.concentration.table$batch)
+
+  for (batch in batches) {
+    local.batch.data.concentration.table <- data.concentration.table[data.concentration.table$batch == batch,]
+    batch.normalized <- normalize.data(local.batch.data.concentration.table, 
+                                      "response", NA, NA, 
+                                      as.numeric(data.aggregated[paste("CTRL-0", batch, sep="-"), ][1]), TRUE)
+    if (n == 0){
+      data.concentration.table.normalized <- batch.normalized
+    } else {
+     data.concentration.table.normalized <- rbind(data.concentration.table.normalized, batch.normalized)
+    }
+    n <- n+1
+  }
+} else {
+  data.concentration.table.normalized <- data.concentration.table
+}
+
+#TODO: fix condition of data.concentration.normalized for subsequent correct plotting
+
+data.concentration.table.normalized[as.idx.colname(data.concentration.table.normalized, "response")] <- unlist(sapply(data.concentration.table.normalized[as.idx.colname(data.concentration.table.normalized, "response")], as.numeric)) #fix data type
+if (normalize.root.length){
+  data.concentration.table.normalized <- cap.normalized.data(data.concentration.table.normalized, normal.process.mode, normal.colname = "response")
+  data.concentration.table.normalized[as.idx.colname(data.concentration.table.normalized, "response")] <- sapply(data.concentration.table.normalized[as.idx.colname(data.concentration.table.normalized, "response")],
+                                                                                                              my.as.numeric.factor) # fix data type
+}
+data.concentration.table.normalized$ratio <- unlist(data.concentration.table.normalized$ratio)
+data.concentration.table.normalized$concentration <- my.as.numeric.factor(data.concentration.table.normalized$concentration)
+total.aggregated.data <- aggregate(response ~ concentration + substance, data = data.concentration.table.normalized, function(x) c(mean = mean(x), sd = sd(x)))
+total.aggregated.data <- do.call(data.frame, total.aggregated.data)
+
+
+data.catechol <- filter.data.by.substances(data.concentration.table.normalized, c("catechol"))
+data.resorcinol <- filter.data.by.substances(data.concentration.table.normalized, c("resorcinol"))
+data.hydrochinon <- filter.data.by.substances(data.concentration.table.normalized, c("hydrochinon"))
+
+aggregated.data.catechol <- filter.data.by.substances(total.aggregated.data, c("catechol"))
+aggregated.data.resorcinol <- filter.data.by.substances(total.aggregated.data, c("resorcinol"))
+aggregated.data.hydrochinon <- filter.data.by.substances(total.aggregated.data, c("hydrochinon"))
+```
+
+Then we plot the root length data.
+```{r}
+log.mode <- "x"
+if (normalize.root.length){
+  upperlim <- 5
+} else {
+  upperlim <- 10
+}
+plot(data.catechol$concentration, data.catechol$response, col=data.catechol$batch, log=log.mode, ylim=c(0,upperlim))
+plot(data.resorcinol$concentration, data.resorcinol$response, col=data.resorcinol$batch, log=log.mode, ylim=c(0,upperlim))
+plot(data.hydrochinon$concentration, data.hydrochinon$response, col=data.hydrochinon$batch, log=log.mode, ylim=c(0,upperlim))
+
+plot(aggregated.data.catechol$concentration, aggregated.data.catechol$response.mean, log=log.mode,  ylim=c(0,upperlim))
+plot(aggregated.data.resorcinol$concentration, aggregated.data.resorcinol$response.mean, log=log.mode, ylim=c(0,upperlim))
+plot(aggregated.data.hydrochinon$concentration, aggregated.data.hydrochinon$response.mean, log=log.mode, ylim=c(0,upperlim))
+
+```
+
+
+Now we perform some statistical analysis on the data.
+```{r}
+aggregated.data <- aggregate(response ~ concentration + substance + batch, data = data.concentration.table.normalized, mean)
+
+
+summary(aov(response ~ batch, data = data.concentration.table.normalized))
+summary(aov(response ~ concentration, data = data.concentration.table.normalized))
+summary(aov(response ~ substance, data = data.concentration.table.normalized))
+  
+for (s in c("catechol", "resorcinol", "hydrochinon")){
+  print(paste("ANOVA for ", s, "\n"))
+  local.data <- filter.data.by.substances(data.concentration.table.normalized, c(s), include.control = FALSE)
+  print(summary(aov(response ~ batch, data = local.data)))
+  print(summary(aov(response ~ concentration, data = local.data)))
+}
+```
+We don't perform any fitting, since no dose dependent relationship of the rootlength was observed.
+
+```{r}
+m.hydrochinon = fit.exp.model(data.hydrochinon, guesses = c(a=0))
+m.resorcinol = fit.exp.model(data.resorcinol, guesses = c(a=0))
+m.catechol = fit.exp.model(data.catechol, guesses = c(a=0))
+
+RMSE(summary(m.hydrochinon)$residuals)
+RMSE(summary(m.resorcinol)$residuals)
+RMSE(summary(m.catechol)$residuals)
+```
+```{r}
+f.plot <- function(aggregated.data, model, substance.name, total.data, x.upper.lim = 1000, x.lower.lim = 0.1){
+  remove.ctrl <- function(df) {
+    return(df[df$substance != "control", ])
+  }
+  
+  process.error.bars <- function(vec) {
+    sapply(vec, function(x) {
+      if (x < 0) {
+        return(0)
+      }
+      if (x > 1) {
+        return(x)
+      }
+      return(x)
+    })
+  }
+  
+  prediction.concentrations <- c(c(seq(0.1,10,1) %o% 10^(-2:2)), x.upper.lim)
+  predicted.data <- data.frame(concentration = prediction.concentrations, a = predict(model, data.frame(concentration = prediction.concentrations)))
+  a <- coefficients(model)[1]
+  ec50 = log(2)/a
+  print(ec50)
+  
+  a.confint.upper <- round(confint(model)[2], 2)
+  a.confint.lower <- round(confint(model)[1], 2)
+  
+  p <- ggplot(data = predicted.data, mapping = aes(x = concentration, y = a)) + 
+    scale_x_log10(limits = c(x.lower.lim, x.upper.lim), 
+                  expand = c(0, 0), 
+                  breaks = c(25,50,100,500), 
+                  labels = c("25","50", "100", "500")) + 
+    scale_y_continuous(limits = c(0, 2.75), 
+                       expand = c(0, 0), 
+                       breaks = c(0, 0.25, 0.5, 0.75, 1, 2), 
+                       labels = c("0", "0.25", "0.5", "0.75", "1", "2")) + 
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank()) + 
+    geom_line() + 
+    geom_errorbar(data = remove.ctrl(aggregated.data), 
+                  mapping = aes(ymin = process.error.bars(response.mean - response.sd), 
+                                ymax = process.error.bars(response.mean + response.sd)), 
+                  color = "blue", 
+                  size = .5) + 
+    geom_point(data = remove.ctrl(aggregated.data), 
+               mapping = aes(x = concentration, y = response.mean), 
+               shape = "cross", 
+               size = 2,
+               stroke = 1,
+               color = "blue") + 
+    geom_segment(mapping = aes(x = ec50, y = 0, xend = ec50, yend = 0.5), 
+                 linetype = "dotted", 
+                 size = 0.25) + 
+    coord_cartesian(clip = "off") + 
+    labs(subtitle = paste("a (95%): ", a.confint.lower, " - ", a.confint.upper, sep = ""))
+  ggsave(paste("", substance.name, "plot", format(Sys.time(), "%d-%m-%Y.eps"), sep = "_"), dpi = "retina", device = "eps")
+  return(p)
+}
+
+catechol.plot <- f.plot(aggregated.data.catechol, 
+                        m.catechol, 
+                        "Catechol", 
+                        filter.data.by.substances(data.concentration.table.normalized, c("catechol")),
+                        x.lower.lim = 0.5)
+hydrochinon.plot <- f.plot(aggregated.data.hydrochinon, 
+                        m.hydrochinon, 
+                        "Hydrochinon", 
+                        filter.data.by.substances(data.concentration.table.normalized, c("hydrochinon")),
+                        x.lower.lim = 5)
+resorcinol.plot <- f.plot(aggregated.data.resorcinol, 
+                        m.resorcinol, 
+                        "Resorcinol", 
+                        filter.data.by.substances(data.concentration.table.normalized, c("resorcinol")),
+                        x.lower.lim = 10)
+```

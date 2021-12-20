@@ -1,0 +1,213 @@
+---
+title: "Analysis"
+output: html_document
+---
+
+```{r}
+library(devtools)
+library(david.sauer.utility)
+library(stringr)
+library(ggplot2)
+library(ggtext)
+library(gridExtra)
+library(svglite)
+library(tidyverse)
+```
+
+We read in the data and perform simple preparations.
+```{r}
+RMSE <- function(error) { sqrt(mean(error^2)) }
+
+raw.data <- readcsv("observations.csv", header = TRUE, sep = ",")
+rownames(raw.data) <- raw.data$label
+row.labels.for.exclusion <- c("C11-50-1", "C12-50-1", "C21-50-1", "C22-50-1", "C31-50-1", "C32-50-1", "C11-75-1", "C12-75-1", "C21-75-1", "C22-75-1", "C31-75-1", "C32-75-1", "R11-50-1", "R12-50-1", "R21-50-1", "R22-50-1", "R31-50-1", "R32-50-1", "R11-100-1", "R12-100-1", "R21-100-1", "R22-100-1", "R31-100-1", "R32-100-1", "H11-50-1", "H12-50-1", "H21-50-1", "H22-50-1", "H31-50-1", "H32-50-1", "H11-100-1", "H12-100-1", "H21-100-1", "H22-100-1", "H31-100-1", "H32-100-1") # controlls which measurements are excluded (provide labels as in data file)
+
+if (length(row.labels.for.exclusion) > 0) { # remove data specified by row.labels.for.exclusion
+  raw.data <- raw.data[-c(sapply(row.labels.for.exclusion, function(x) {
+    return(as.idx.rowname(raw.data, x))
+  })), ]
+}
+
+info.raw.data <- apply(raw.data, 1, function(x) {
+  return(appl2.label.as.vector(x[as.idx.colname(raw.data, "label")]))
+})
+
+raw.data <- cbind(t(data.frame(info.raw.data)), raw.data)
+colnames(raw.data) <- c("substance", "concentration", "batch", "label", "X0", "X7")
+rownames(raw.data) <- seq(1, dim(raw.data)[1], 1)
+raw.data <- raw.data[!is.na(raw.data$substance),]
+raw.data <- raw.data[!is.na(raw.data$X0),]
+raw.data <- raw.data[!is.na(raw.data$X7),]
+
+data <- raw.data
+data$ratio <- data$X7/data$X0
+data$X0 <- NULL
+data$X7 <- NULL
+```
+
+```{r}
+n <- 0
+
+for (batch in unique(raw.data$batch)) {
+  local.batch.data <- data[data$batch == batch, ]
+  if (n == 0){
+    normalized.data <- normalize.data(local.batch.data, "ratio", "substance", "control")
+  } else {
+    normalized.local.batch.data <- normalize.data(local.batch.data, "ratio", "substance", "control") 
+    normalized.data <- rbind(normalized.data, normalized.local.batch.data)
+  }
+  n <- n+1
+}
+
+#normalized.data[normalized.data$ratio > 1 & normalized.data$substance != "control", as.idx.colname(normalized.data, "ratio")] <- NA
+
+normalized.data.aggregated <- aggregate(ratio ~ substance + concentration, data = normalized.data, function(x) c(mean = mean(x), sd = sd(x)))
+normalized.data.aggregated <- do.call(data.frame, normalized.data.aggregated)
+rownames(normalized.data.aggregated) <- seq(1, dim(normalized.data.aggregated)[1], 1)
+
+normalized.data.aggregated.catechol <- filter.data.by.substances(normalized.data.aggregated, c("catechol"))
+normalized.data.aggregated.resorcinol <- filter.data.by.substances(normalized.data.aggregated, c("resorcinol"))
+normalized.data.aggregated.hydrochinon <- filter.data.by.substances(normalized.data.aggregated, c("hydrochinon"))
+
+normalized.catechol.data <- filter.data.by.substances(normalized.data, c("catechol"))
+normalized.resorcinol.data <- filter.data.by.substances(normalized.data, c("resorcinol"))
+normalized.hydrochinon.data <- filter.data.by.substances(normalized.data, c("hydrochinon"))
+```
+
+We plot the data.
+```{r}
+log.mode <- ""
+plot(normalized.catechol.data$concentration, normalized.catechol.data$ratio, col=normalized.catechol.data$batch, log=log.mode)
+plot(normalized.resorcinol.data$concentration, normalized.resorcinol.data$ratio, col=normalized.resorcinol.data$batch, log=log.mode)
+plot(normalized.hydrochinon.data$concentration, normalized.hydrochinon.data$ratio, col=normalized.hydrochinon.data$batch, log=log.mode)
+
+plot(normalized.data.aggregated.catechol$concentration, normalized.data.aggregated.catechol$ratio.mean, log=log.mode)
+plot(normalized.data.aggregated.resorcinol$concentration, normalized.data.aggregated.resorcinol$ratio.mean, log=log.mode)
+plot(normalized.data.aggregated.hydrochinon$concentration, normalized.data.aggregated.hydrochinon$ratio.mean, log=log.mode)
+```
+
+Now we perform some statistics.
+```{r}
+stat.data <- aggregate(ratio ~ substance + concentration + batch, data = normalized.data, mean)
+summary(aov(ratio ~ substance, data = stat.data))
+summary(aov(ratio ~ concentration, data = stat.data))
+summary(aov(ratio ~ batch, data = stat.data))
+
+for (s in c("catechol", "resorcinol", "hydrochinon")){
+    print(paste("ANOVA for ", s, "\n"))
+    local.data <- filter.data.by.substances(stat.data, c(s))
+    print(summary(aov(ratio ~ batch, data = local.data)))
+    print(summary(aov(ratio ~ concentration, data = local.data)))
+  }
+```
+
+Finally we perform fitting.
+```{r}
+m.catechol.norm <- fit.hill.model(normalized.catechol.data, response.variable.name = "ratio")
+m.resorcinol.norm <- fit.hill.model(normalized.resorcinol.data, response.variable.name = "ratio", guesses=c(ec50=14, n=1.5))
+m.hydrochinon.norm <- fit.hill.model(normalized.hydrochinon.data, response.variable.name = "ratio")
+
+sample.data <- data.frame(concentration = seq(0,500,0.1))
+catechol.pred <- predict(m.catechol.norm, sample.data)
+resorcinol.pred <- predict(m.resorcinol.norm, sample.data)
+hydrochinon.pred <- predict(m.hydrochinon.norm, sample.data)
+
+plot(sample.data$concentration, catechol.pred, type="l", log="x", xlab="Konzentration (µM)", ylab="normalisiertes relatives Wachstum", main="Catechol")
+plot(sample.data$concentration, resorcinol.pred, type="l", log="x", xlab="Konzentration (µM)", ylab="normalisiertes relatives Wachstum", main="Resorcinol")
+plot(sample.data$concentration, hydrochinon.pred, type="l", log="x", xlab="Konzentration (µM)", ylab="normalisiertes relatives Wachstum", main="Hydrochinon")
+
+catechol.pred.df <- data.frame(concentration = sample.data$concentration, ratio.mean = catechol.pred)
+resorcinol.pred.df <- data.frame(concentration = sample.data$concentration, ratio.mean = resorcinol.pred)
+hydrochinon.pred.df <- data.frame(concentration = sample.data$concentration, ratio.mean = hydrochinon.pred)
+
+catechol.rmse <- RMSE(summary(m.catechol.norm)$residuals)
+resorcinol.rmse <- RMSE(summary(m.resorcinol.norm)$residuals)
+hydroquinone.rmse <- RMSE(summary(m.hydrochinon.norm)$residuals)
+```
+
+Now we plot the data.
+```{r}
+plot.dose.response.appl2 <- function(aggregated.data, model.data, substance.name, x.upper.lim = 100) {
+  dose.response.plot(aggregated.data = aggregated.data, model.data = model.data, title = paste(substance.name, "+ 0.1% (v/v) Tween20 nach 7 Tagen"), x.upper.lim = x.upper.lim, xlab = "Konzentration (mM)", ylab = "normalisiertes relatives Wachstum", filename = substance.name)
+}
+
+plot.dose.response.appl2(normalized.data.aggregated.catechol, m.catechol.norm, "Catechol", x.upper.lim = 110)
+plot.dose.response.appl2(normalized.data.aggregated.resorcinol, m.resorcinol.norm, "Resorcinol", x.upper.lim = 160)
+plot.dose.response.appl2(normalized.data.aggregated.hydrochinon, m.hydrochinon.norm, "Hydrochinon", x.upper.lim = 210)
+```
+
+Now we generate more beautiful figures
+```{r}
+f.plot <- function(aggregated.data, model, substance.name, total.data, x.upper.lim = 250){
+  remove.ctrl <- function(df) {
+    return(df[df$substance != "control", ])
+  }
+  
+  process.error.bars <- function(vec) {
+    sapply(vec, function(x) {
+      if (x < 0) {
+        return(0)
+      }
+      if (x > 1) {
+        return(x)
+      }
+      return(x)
+    })
+  }
+  
+  prediction.concentrations <- c(c(seq(1,10,1) %o% 10^(-2:2)), x.upper.lim)
+  predicted.data <- data.frame(concentration = prediction.concentrations, ratio.mean = predict(model, data.frame(concentration = prediction.concentrations)))
+  ec50 <- coefficients(model)[1]
+  n <- coefficients(model)[2]
+  
+  ec50.confint.upper <- round(confint(model)[1, ][2], 2)
+  ec50.confint.lower <- round(confint(model)[1, ][1], 2)
+  n.confint.upper <- round(confint(model)[2, ][2], 2)
+  n.confint.lower <- round(confint(model)[2, ][1], 2)
+  
+  p <- ggplot(data = predicted.data, mapping = aes(x = concentration, y = ratio.mean)) + 
+    scale_x_log10(limits = c(0.1, x.upper.lim), expand = c(0, 0), breaks = c(0.1, 1, 5, 10, 50, 100, 200), labels = c("0.1", "1", "5", "10", "50", "100", "200")) + 
+    scale_y_continuous(limits = c(0, 1.3), expand = c(0, 0)) + 
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          plot.title = element_text(hjust = 0.5),  
+          plot.subtitle = element_text(hjust = 0.5), 
+          plot.margin = unit(c(1, 1, 1, 1), "cm")) + 
+    geom_line() + 
+    geom_point(data = total.data,
+               mapping = aes(x = concentration, y = ratio),
+               shape = "circle",
+               color = "gray",
+               fill = "gray",
+               size = 1.5,
+               inherit.aes = FALSE) +
+    geom_errorbar(data = remove.ctrl(aggregated.data), 
+                  mapping = aes(ymin = process.error.bars(ratio.mean - ratio.sd), 
+                                ymax = process.error.bars(ratio.mean + ratio.sd)), 
+                  color = "blue", 
+                  size = .5) + 
+    geom_point(data = remove.ctrl(aggregated.data), 
+               mapping = aes(x = concentration, y = ratio.mean), 
+               shape = "cross", 
+               size = 2,
+               stroke = 1,
+               color = "blue") + 
+    geom_segment(mapping = aes(x = ec50, y = 0, xend = ec50, yend = 0.5), 
+                 linetype = "dotted", 
+                 size = 0.25) + 
+    coord_cartesian(clip = "off") + 
+    labs(x = "Konzentration [µM]", 
+         y = "relatives Wachstum", 
+         title = "", 
+         subtitle = paste("EC50 (95%): ", ec50.confint.lower, " - ", ec50.confint.upper, ", n (95%): ", n.confint.lower, " - ", n.confint.upper, sep = ""))
+  ggsave(paste("", substance.name, "plot", format(Sys.time(), "%d-%m-%Y.eps"), sep = "_"), dpi = "retina", device = "eps")
+  return(p)
+}
+
+catechol.plot <- f.plot(normalized.data.aggregated.catechol, m.catechol.norm, "Catechol", filter.data.by.substances(normalized.data, c("catechol"), include.control = FALSE))
+resorcinol.plot <- f.plot(normalized.data.aggregated.resorcinol, m.resorcinol.norm, "Resorcinol", filter.data.by.substances(normalized.data, c("resorcinol"), include.control = FALSE))
+hydrochinon.plot <- f.plot(normalized.data.aggregated.hydrochinon, m.hydrochinon.norm, "Hydrochinon", filter.data.by.substances(normalized.data, c("hydrochinon"), include.control = FALSE), x.upper.lim = 500)
+```
+
+

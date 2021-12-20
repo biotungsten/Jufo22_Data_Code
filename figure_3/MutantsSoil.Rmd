@@ -1,0 +1,91 @@
+---
+title: "GSH"
+output: html_document
+---
+
+```{r}
+library(devtools)
+#install_github("biotungsten/david.sauer.utility@master")
+library(david.sauer.utility)
+library(ggtext)
+library(svglite)
+library(tidyverse)
+library(multcompView)
+```
+
+We read in the data and perform simple preparations.
+```{r}
+raw.data.cad2 <- read_csv("cad2.csv")
+raw.data.wt <- read_csv("WT.csv")
+raw.data.cad2 <- raw.data.cad2 %>%
+  mutate(mutant = "cad2")
+raw.data.wt <- raw.data.wt %>%
+  mutate(mutant = "wt")
+raw.data <- bind_rows(raw.data.cad2, raw.data.wt)
+
+row.labels.for.exclusion <- c() # controlls which measurements are excluded (provide labels as in data file)
+
+data <- raw.data %>% 
+  filter(!(treatment %in% row.labels.for.exclusion)) %>%
+  separate(treatment, c("substance", "concentration", "batch"), sep = "-") %>%
+  mutate(label = paste(substance, concentration)) %>%
+  mutate(substance = str_sub(substance, start = 1, end = -2)) %>%
+  mutate(ratio = day7/day0)
+
+n <- 0
+for (b in unique(data$batch)) {
+  cad2.normalize.value <- mean((data %>% filter(mutant == "cad2", substance == "CTRL", batch == b))$ratio)
+  wt.normalize.value <- mean((data %>% filter(mutant == "wt", substance == "CTRL", batch == b))$ratio)
+  batch.normalized <- data %>%
+      filter(batch == b) %>%
+      mutate(ratio = ratio/ifelse(mutant == "cad2", cad2.normalize.value, wt.normalize.value)) %>%
+      mutate(label = paste(substance, concentration, mutant))
+  if (n == 0){
+    data.normalized <- batch.normalized
+  } else {
+    data.normalized <- bind_rows(data.normalized, batch.normalized)
+  }
+  n <- n+1
+}
+
+data.grouped <- data.normalized %>%
+  group_by(substance, concentration, mutant) %>%
+  summarise(mean = mean(ratio), sd = sd(ratio), .groups = "drop") %>%
+  mutate(label = paste(substance, concentration, mutant))
+```
+
+We plot the data.
+```{r}
+p <- data.grouped %>%
+  mutate(color = ifelse(mutant == "cad2", "gray", "gray40")) %>%
+  filter(substance != "CTRL") %>%
+  ggplot(mapping = aes(x = label, 
+                       y = mean,
+                       ymin = mean - sd,
+                       ymax = mean + sd,
+                       fill = color)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  scale_y_continuous(limits = c(0, 1)) + 
+  geom_col(col = "black", width = .6) +
+  geom_errorbar(size = .5,
+                width = .5,
+                col = "black") +
+  geom_dotplot(binaxis = "y",
+               data = data.normalized %>% filter(substance != "CTRL"),
+               mapping = aes(x = label, y = ratio),
+               inherit.aes = FALSE,
+               fill = "blue") +
+  labs(y = "relative Änderung")
+ggsave("prelim.eps", device = "eps")
+```
+
+```{r}
+data.stat <- data.normalized %>%
+  filter(substance != "CTRL")
+anova <- aov(ratio ~ label, data = data.stat)
+tukey <- TukeyHSD(anova)
+letters <- multcompLetters4(anova, tukey)
+```
+
