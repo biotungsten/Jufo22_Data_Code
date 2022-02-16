@@ -44,17 +44,14 @@ p <- ggplot(data = data.summarized,
         panel.grid.minor = element_blank()) +
   geom_col() +
   scale_y_continuous(limits = c(0,1.1)) + 
-  # geom_errorbar() + 
-  # geom_dotplot(binaxis = "y", 
-  #              data = data, 
-  #              mapping = aes(x = substance, y = intensity),
-  #              inherit.aes = FALSE,
-  #              binwidth = 0.05,
-  #              dotsize = 0.2,
-  #              stackdir = "center")
-  geom_violin(data = data, 
-              mapping = aes(x = substance, y = intensity),
-              inherit.aes = FALSE)
+  geom_errorbar() + 
+  geom_dotplot(binaxis = "y", 
+               data = data, 
+               mapping = aes(x = substance, y = intensity),
+               inherit.aes = FALSE,
+               binwidth = 0.05,
+               dotsize = 0.2,
+               stackdir = "center")
 ggsave("prelim2.eps", device = "eps")
 p
 ```
