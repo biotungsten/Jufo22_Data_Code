@@ -52,6 +52,8 @@ data.grouped <- data.normalized %>%
   group_by(substance, concentration, mutant) %>%
   summarise(mean = mean(ratio), sd = sd(ratio), .groups = "drop") %>%
   mutate(label = paste(substance, concentration, mutant))
+
+data.grouped$label <- factor(data.grouped$label, levels = c("CA 3 wt", "RE 14 wt", "HQ 14 wt", "CA 3 cad2", "RE 14 cad2", "HQ 14 cad2"))
 ```
 
 We plot the data.
@@ -76,16 +78,18 @@ p <- data.grouped %>%
                data = data.normalized %>% filter(substance != "CTRL"),
                mapping = aes(x = label, y = ratio),
                inherit.aes = FALSE,
-               fill = "blue") +
+               fill = "blue",
+               stackdir = "center") +
   labs(y = "relative Änderung")
-ggsave("prelim.eps", device = "eps")
+ggsave("prelim2.eps", device = "eps")
+p
 ```
 
 ```{r}
-data.stat <- data.normalized %>%
-  filter(substance != "CTRL")
+data.stat <- data.normalized 
 anova <- aov(ratio ~ label, data = data.stat)
 tukey <- TukeyHSD(anova)
 letters <- multcompLetters4(anova, tukey)
+letters
 ```
 

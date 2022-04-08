@@ -1,0 +1,81 @@
+---
+title: "LongtermTreatment"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(multcompView)
+```
+
+We read in the data and perform simple preparations.
+```{r}
+NORMALIZE <- FALSE
+raw.data <- read_csv("experiment_data_lt.csv")
+
+data <- raw.data %>% 
+  select(substance, replicate, l0, l7, l14, substance_conc) %>%
+  mutate(label = paste(substance, substance_conc)) %>%
+  mutate(ratio = l14/l0) %>%
+  filter((!is.na(l0)) & (!is.na(l7)) & (!is.na(l14)))
+if(NORMALIZE == TRUE){
+  first <- TRUE
+  for (b in unique(data$replicate)) {
+    normalize.value <- mean((data %>% filter(substance == "CTRL", replicate == b))$ratio)
+    batch.normalized <- data %>%
+        filter(replicate == b) %>%
+        mutate(ratio = ratio/normalize.value) %>%
+        mutate(label = paste(substance, substance_conc))
+    if (first == TRUE){
+      data.normalized <- batch.normalized
+      first <- FALSE
+    } else {
+      data.normalized <- bind_rows(data.normalized, batch.normalized)
+    }
+  }
+} else {
+  data.normalized <- data
+}
+data.normalized <- data.normalized %>%
+  mutate(replicate_str = paste("B", replicate))
+
+data.grouped <- data.normalized %>%
+  group_by(substance, substance_conc) %>%
+  summarise(mean = mean(ratio), sd = sd(ratio), .groups = "drop") %>%
+  mutate(label = paste(substance, substance_conc))
+data.grouped$label <- factor(data.grouped$label, levels = c("CA 100", "CA 250", "CA 500", "HQ 100", "HQ 250", "HQ 750", "RE 250", "RE 500", "RE 750", "CTRL 0"))
+```
+
+We plot the data.
+```{r}
+p <- data.grouped %>%
+  ggplot(mapping = aes(x = label, 
+                       y = mean,
+                       ymin = mean - sd,
+                       ymax = mean + sd)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  scale_y_continuous(limits = c(0, 5.2)) + 
+  geom_col(col = "black", width = .6) +
+  geom_errorbar(size = .5,
+                width = .5,
+                col = "black") +
+  geom_dotplot(binaxis = "y",
+               data = data.normalized,
+               mapping = aes(x = label, y = ratio),
+               inherit.aes = FALSE,
+               binwidth = 0.1,
+               stackdir = "center") +
+  geom_abline(slope = 0, intercept =1)+
+  labs(y = "relative Änderung")
+ggsave("prelim2.eps", device = "eps")
+p
+```
+
+```{r}
+data.stat <- data.normalized
+anova <- aov(ratio ~ label, data = data.stat)
+tukey <- TukeyHSD(anova)
+letters <- multcompLetters4(anova, tukey)
+```

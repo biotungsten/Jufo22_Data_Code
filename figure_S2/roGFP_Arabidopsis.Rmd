@@ -1,0 +1,71 @@
+---
+title: "roGFPNicotiana"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(multcompView)
+weighted.sd <- function(x, wt){
+  m <- weighted.mean(x, wt)
+  n <- length(wt)
+  v <- sum(wt * (x-m)^2) / (sum(wt)*(n/(n-1)))
+  return(sqrt(v))
+}
+```
+
+```{r}
+raw.data <- read.csv("img/results/Results.csv")
+
+
+data <- raw.data %>%
+  rename(intensity = Mean) %>%
+  filter(substance != "H2O2 15", substance != "H2O2 old") %>%
+  mutate(label = paste(substance, concentration, sep="-"))
+
+data.grouped <- data %>%
+  group_by(substance, concentration) 
+
+data.summarized <- data.grouped %>%
+  summarise(mean = weighted.mean(intensity, Area), sd = weighted.sd(intensity, Area), se = weighted.mean(StdDev, Area)) %>%
+  mutate(label = paste(substance, concentration, sep="-"))
+data.summarized$label <- factor(data.summarized$label, levels = c("C-20", "C-50", "H-20", "H-50", "R-20", "R-50", "DTT-2", "H2O-0", "BSO H2O-0", "H2O2 old-10", "H2O2-10", "H2O2 15-10"))
+```
+
+```{r}
+p <- ggplot(data = data.summarized, 
+            mapping = aes(x = label,
+                          y = mean,
+                          ymin = mean-sd,
+                          ymax = mean+sd)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  geom_col() +
+  scale_y_continuous(limits = c(0,1.3)) + 
+  geom_errorbar() +
+  geom_dotplot(binaxis = "y",
+               data = data,
+               mapping = aes(x = label, y = intensity),
+               inherit.aes = FALSE,
+               binwidth = 0.05,
+               dotsize = 0.4,
+               stackdir = "center")
+#ggsave("figure.eps", device = "eps")
+p
+```
+
+
+```{r}
+data.stat <- data %>%
+  mutate(label = paste(substance, concentration)) %>%
+  filter(!(substance %in% c("BSO H2O")))
+anova <- aov(intensity ~ label , data = data.stat)
+tukey <- TukeyHSD(anova)
+letters <- multcompLetters4(anova, tukey)
+```
+

@@ -1,0 +1,72 @@
+---
+title: "noTween"
+output: html_document
+date: '2022-04-06'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(multcompView)
+library(tm)
+`%ni%` <- Negate(`%in%`)
+```
+
+
+```{r}
+raw.data <- read_csv("noTween.csv")
+
+data <- raw.data %>%
+  mutate(ratio = day7/day0, label = paste(substance, concentration, sep=""))
+
+baseline <- mean(data$ratio[data$substance == "CTRL"])
+
+data.normalized <- data %>%
+  mutate(ratio = ratio/baseline)
+
+data.grouped <- data.normalized %>%
+  group_by(concentration, substance) %>%
+  summarize(mean = mean(ratio), sd = sd(ratio)) %>%
+  mutate(label = paste(substance, concentration, sep=""))
+
+data.grouped$label <- factor(data.grouped$label, levels = c("C10", "R10", "H10", "CTRL0"))
+```
+
+
+```{r}
+p <- data.grouped %>%
+  ggplot(mapping = aes(x = label, 
+                       y = mean,
+                       ymin = mean - sd,
+                       ymax = mean + sd)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  scale_y_continuous(limits = c(0, 1.2)) + 
+  geom_col(col = "black", width = .6) +
+  geom_errorbar(size = .5,
+                width = .5,
+                col = "black") +
+  geom_dotplot(binaxis = "y",
+               data = data.normalized,
+               mapping = aes(x = label, y = ratio),
+               inherit.aes = FALSE,
+               fill = "blue",
+               stackdir = "center") +
+  labs(y = "relative Änderung")
+ggsave("prelim2.eps", device = "eps")
+p
+```
+
+
+```{r}
+data.stat <- data.normalized 
+anova <- aov(ratio ~ label, data = data.stat)
+tukey <- TukeyHSD(anova)
+letters <- multcompLetters4(anova, tukey)
+letters
+```
+

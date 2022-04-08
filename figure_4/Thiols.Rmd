@@ -1,0 +1,130 @@
+---
+title: "Analysis of thiols"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(multcompView)
+```
+
+```{r}
+timepoint_for_analysis <- "724"
+
+raw.data <- read_csv("thiolData.csv")
+data <- raw.data %>%
+  filter(repetition != 1) %>%
+  mutate(label = paste(time, substance, concentration, sep=""))
+  
+data.grouped <- data %>%
+  group_by(substance, concentration, time) %>%
+  summarize(cys.mean = mean(cys, na.rm = TRUE), cys.sd = sd(cys, na.rm = TRUE), gsh.mean = mean(gsh, na.rm = TRUE), gsh.sd = sd(gsh, na.rm = TRUE), .groups = "drop")  %>%
+  mutate(label = paste(time, substance, concentration, sep=""))
+
+data.grouped$label <- factor(data.grouped$label, levels = c("24C2", "24C10", "7C2", "7C10", "24R2", "24R10", "7R2", "7R10", "24H2", "24H10", "7H2", "7H10", "24CTRL0", "7CTRL0"))
+```
+
+
+```{r}
+raw.data.areas.7 <- read_csv("meta7_leaf_area.csv")
+raw.data.areas.24 <- read_csv("meta24_leaf_area.csv")
+  
+data.areas.7 <- raw.data.areas.7 %>%
+  mutate(ratio = day7/day1, day1 = NULL, day7 = NULL, time = 7) %>%
+  mutate(label = paste(time, substance, concentration, sep=""))
+data.areas.24 <- raw.data.areas.24 %>%
+  mutate(ratio = day1/day0, day1 = NULL, day0 = NULL, time = 24) %>%
+  mutate(label = paste(time, substance, concentration, sep=""))
+
+data.areas <- bind_rows(data.areas.24, data.areas.7)
+
+
+master.data <- merge(data, data.areas[, c("ratio", "time", "substance", "concentration", "replicate")], by = c("time", "substance", "concentration", "replicate")
+```
+
+```{r}
+p.cys <- ggplot(data = data.grouped, 
+            mapping = aes(x = label,
+                          y = cys.mean,
+                          ymin = cys.mean-cys.sd,
+                          ymax = cys.mean+cys.sd)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  scale_y_continuous(limits = c(0, 30), 
+                     sec.axis = sec_axis(~ . * (1/filter(data.grouped, substance == "CTRL" & time == 24)$cys.mean))) +
+  geom_col() +
+  geom_errorbar() + 
+  geom_dotplot(binaxis = "y", 
+               data = data, 
+               mapping = aes(x = label, y = cys),
+               inherit.aes = FALSE,
+               stackdir = "center")
+p.cys
+ggsave(paste(timepoint_for_analysis, "cys.eps", sep=""), device = "eps")
+
+p.gsh <- ggplot(data = data.grouped, 
+            mapping = aes(x = label,
+                          y = gsh.mean,
+                          ymin = gsh.mean-gsh.sd,
+                          ymax = gsh.mean+gsh.sd)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  scale_y_continuous(limits = c(0, 520), 
+                     sec.axis = sec_axis(~ . * (1/filter(data.grouped, substance == "CTRL" & time == 24)$gsh.mean))) +
+  geom_col() +
+  geom_errorbar() + 
+  geom_dotplot(binaxis = "y", 
+               data = data, 
+               mapping = aes(x = label, y = gsh),
+               inherit.aes = FALSE,
+               stackdir = "center")
+p.gsh
+ggsave(paste(timepoint_for_analysis, "gsh.eps", sep=""), device = "eps")
+```
+
+```{r}
+
+data.stat <- data
+gsh.anova <- aov(gsh ~ label, data = data.stat)
+gsh.tukey <- TukeyHSD(gsh.anova)
+gsh.letters <- multcompLetters4(gsh.anova, gsh.tukey)
+
+cys.anova <- aov(cys ~ label, data = data.stat)
+cys.tukey <- TukeyHSD(cys.anova)
+cys.letters <- multcompLetters4(cys.anova, cys.tukey)
+
+selective.t.test <- function(pairs.for.comparisons, group.column, value.column, data, adjust.method = "hochberg"){
+  p.values <- c()
+  for (pair in pairs.for.comparisons) {
+    if (length(pair) != 2){
+      print(pair)
+      print("Pairs must contain exactly two values.")
+      return()
+    }
+    data.stat <- data %>%
+      filter(!!sym(group.column) %in% pair)
+    values <- data.stat[[value.column]]
+    groups <- data.stat[[group.column]]
+    local.t.test <- t.test(values[groups == pair[1]], values[groups == pair[2]], alternative = "two.sided")
+    p.values <- append(p.values, local.t.test$p.value)
+  }
+  adjusted.p.values <- p.adjust(p.values, adjust.method)
+  i <- 1
+  for (pair in pairs.for.comparisons) {
+    sign.string <- ""
+    if (adjusted.p.values[i] < 0.05) {
+      sign.string <- "*"
+    }
+    cat(paste(pair[1], " - ", pair[2], ":\t", round(adjusted.p.values[i],4), "\t", sign.string, "\n", sep=""))
+    i <- i+1
+  }
+  return(adjusted.p.values)
+}
+```
+

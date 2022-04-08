@@ -10,7 +10,6 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(multcompView)
-
 weighted.sd <- function(x, wt){
   m <- weighted.mean(x, wt)
   n <- length(wt)
@@ -20,22 +19,52 @@ weighted.sd <- function(x, wt){
 ```
 
 ```{r}
-raw.data <- read_csv("Results.csv")
+OVEREXPOSURE = TRUE
+CHLOROPLASTS = TRUE
+
+dates = c("1603", "0903")
+
+i = 0
+for (d in dates) {
+  results = paste("./", d, "/", sep = "")
+  
+  if (OVEREXPOSURE == FALSE) {
+    results = paste(results, "noOverexposure_", sep = "")
+  }
+  if (CHLOROPLASTS == FALSE) {
+    results = paste(results, "noChloroplasts_", sep = "")
+  }
+  results = paste(results, "results/Results.csv", sep = "")
+  local.data <- read_csv(results)
+  if (i == 0){
+    raw.data <- local.data
+  } else {
+    raw.data <-bind_rows(local.data, raw.data)
+  }
+  i = i+1
+}
+
+
+
 data <- raw.data %>%
-  select(-c("repetition", "std", "min", "max")) %>%
-  rename(intensity = mean)
+  replace_na(list(Substance = "no infiltration")) %>%
+  rename(intensity = Mean) %>%
+  filter(Substance != "_H2O2", Konstrukt == "roGFPxP19", Substance != "_DTT", Substance != "_H", Substance != "_H2O") %>%
+  mutate(label = paste(Substance, Konzentration, sep="-")) %>%
+  mutate(batch_col = paste("B", as.character(Batch), sep=""))
 
 data.grouped <- data %>%
-  group_by(substance) 
+  group_by(Substance, Konzentration) 
 
 data.summarized <- data.grouped %>%
-  summarise(mean = mean(intensity), sd = sd(intensity))
-data.summarized$substance <- factor(data.summarized$substance, levels = c("C", "H", "R", "Tween", "H2O2", "DTT", "H2O"))
+  summarise(mean = weighted.mean(intensity, Area), sd = weighted.sd(intensity, Area), se = weighted.mean(StdDev, Area)) %>%
+  mutate(label = paste(Substance, Konzentration, sep="-"))
+data.summarized$label <- factor(data.summarized$label, levels = c("C-20", "CTween-20", "C-50", "H-20", "H-50", "R-20", "R-50", "H2O2-10", "DTT-2", "H2O-0", "no infiltration-0"))
 ```
 
 ```{r}
 p <- ggplot(data = data.summarized, 
-            mapping = aes(x = substance,
+            mapping = aes(x = label,
                           y = mean,
                           ymin = mean-sd,
                           ymax = mean+sd)) +
@@ -43,26 +72,24 @@ p <- ggplot(data = data.summarized,
   theme(panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank()) +
   geom_col() +
-  scale_y_continuous(limits = c(0,1.1)) + 
-  # geom_errorbar() + 
-  # geom_dotplot(binaxis = "y", 
-  #              data = data, 
-  #              mapping = aes(x = substance, y = intensity),
-  #              inherit.aes = FALSE,
-  #              binwidth = 0.05,
-  #              dotsize = 0.2,
-  #              stackdir = "center")
-  geom_violin(data = data, 
-              mapping = aes(x = substance, y = intensity),
-              inherit.aes = FALSE)
-ggsave("prelim2.eps", device = "eps")
+  scale_y_continuous(limits = c(0,1.4)) + 
+  geom_errorbar() +
+  geom_dotplot(binaxis = "y",
+               data = data,
+               mapping = aes(x = label, y = intensity, fill = batch_col),
+               inherit.aes = FALSE,
+               binwidth = 0.05,
+               dotsize = 0.4,
+               stackdir = "center")
+ggsave("figure.eps", device = "eps")
 p
 ```
 
 
 ```{r}
-data.stat <- data
-anova <- aov(intensity ~ substance, data = data.stat)
+data.stat <- data %>%
+  mutate(label = paste(Substance, Konzentration))
+anova <- aov(intensity ~ label , data = data.stat)
 tukey <- TukeyHSD(anova)
 letters <- multcompLetters4(anova, tukey)
 ```

@@ -1,0 +1,69 @@
+---
+title: "roGFPNicotiana"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(multcompView)
+
+weighted.sd <- function(x, wt){
+  m <- weighted.mean(x, wt)
+  n <- length(wt)
+  v <- sum(wt * (x-m)^2) / (sum(wt)*(n/(n-1)))
+  return(sqrt(v))
+}
+```
+
+```{r}
+raw.data <- read_csv("Results.csv")
+data <- raw.data %>%
+  select(-c("repetition", "std", "min", "max")) %>%
+  rename(intensity = mean)
+
+data.grouped <- data %>%
+  group_by(substance) 
+
+data.summarized <- data.grouped %>%
+  summarise(mean = mean(intensity), sd = sd(intensity))
+data.summarized$substance <- factor(data.summarized$substance, levels = c("C", "H", "R", "Tween", "H2O2", "DTT", "H2O"))
+```
+
+```{r}
+p <- ggplot(data = data.summarized, 
+            mapping = aes(x = substance,
+                          y = mean,
+                          ymin = mean-sd,
+                          ymax = mean+sd)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  geom_col() +
+  scale_y_continuous(limits = c(0,1.1)) + 
+  # geom_errorbar() + 
+  # geom_dotplot(binaxis = "y", 
+  #              data = data, 
+  #              mapping = aes(x = substance, y = intensity),
+  #              inherit.aes = FALSE,
+  #              binwidth = 0.05,
+  #              dotsize = 0.2,
+  #              stackdir = "center")
+  geom_violin(data = data, 
+              mapping = aes(x = substance, y = intensity),
+              inherit.aes = FALSE)
+ggsave("prelim2.eps", device = "eps")
+p
+```
+
+
+```{r}
+data.stat <- data
+anova <- aov(intensity ~ substance, data = data.stat)
+tukey <- TukeyHSD(anova)
+letters <- multcompLetters4(anova, tukey)
+```
+
